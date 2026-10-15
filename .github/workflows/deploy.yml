@@ -1,0 +1,71 @@
+name: WMS Branch Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        type: choice
+        description: 'Target Environment'
+        required: true
+        options:
+          - QA
+          - Prod
+
+jobs:
+  detect-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      # Step A: Checkout full git history so git diff works
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Step B: Identify only modified/added files compared to master
+      - name: Find Changed Files
+        id: diff
+        run: |
+          echo "Comparing current branch to origin/master..."
+          # Make sure target branch (master) is fetched
+          git fetch origin master
+          
+          # List only added (A), copied (C), modified (M) files
+          CHANGED_FILES=$(git diff --name-only --diff-filter=ACM origin/master...HEAD)
+          
+          echo "Changed files detected:"
+          echo "$CHANGED_FILES"
+          
+          # Create an artifact directory to stage files
+          mkdir -p deploy_package
+          
+          # Copy only the changed files into the staging folder preserving directory paths
+          for file in $CHANGED_FILES; do
+            if [ -f "$file" ]; then
+              mkdir -p "deploy_package/$(dirname "$file")"
+              cp "$file" "deploy_package/$file"
+            fi
+          done
+
+      # Step C: Upload the package (simulating the S3 bucket upload)
+      - name: Upload Delta Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-payload-${{ github.event.inputs.target_env }}
+          path: deploy_package/
+
+  simulate-deploy:
+    needs: detect-and-package
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target_env }} # Enables GitHub Approval Gates
+    steps:
+      - name: Download Payload
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-payload-${{ github.event.inputs.target_env }}
+          path: incoming_changes/
+
+      - name: Simulate Applying Changes to Target Server
+        run: |
+          echo "Deploying to Environment: ${{ github.event.inputs.target_env }}"
+          echo "Files to update on remote server:"
+          ls -R incoming_changes/
